@@ -1,14 +1,9 @@
-FROM node:20-bullseye-slim
+FROM node:20-alpine
 
 WORKDIR /app
 
-# Install curl, bash, ca-certificates, and wget
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    wget \
-    ca-certificates \
-    bash \
-    && rm -rf /var/lib/apt/lists/*
+# Install ca-certificates, curl, bash, and wget on Alpine (instant & always available)
+RUN apk add --no-cache curl wget ca-certificates bash
 
 # Install wgcf (Official WARP WireGuard configuration generator)
 RUN wget -q -O /usr/local/bin/wgcf https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_amd64 \
