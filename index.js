@@ -70,12 +70,15 @@ const server = http.createServer((req, res) => {
   delete forwardHeaders['x-real-ip'];
 
   const proxyOptions = {
+    protocol: 'https:',
     hostname: TARGET_HOST,
     port: TARGET_PORT,
     path: req.url,
     method: req.method,
     headers: forwardHeaders,
     agent: agent,
+    servername: TARGET_HOST,
+    rejectUnauthorized: false,
     timeout: 30000,
   };
 
