@@ -1,89 +1,107 @@
 /**
- * SVIT Accredia ERP Reverse Proxy Gateway
- * Powered by http-proxy & Cloudflare WARP SOCKS5 Tunnel
- *
- * Target: https://svit-students.accredia.in:8084
+ * Direct HTTPS Reverse Proxy Gateway (No UDP/WireGuard dependency)
+ * Built with native connection pool and TLS SNI handling
  */
 
 const http = require('http');
-const httpProxy = require('http-proxy');
-const { SocksProxyAgent } = require('socks-proxy-agent');
+const https = require('https');
 
 const PORT = process.env.PORT || 8080;
-const SOCKS_PROXY = process.env.SOCKS_PROXY || 'socks5h://127.0.0.1:1080';
 const TARGET_HOST = 'svit-students.accredia.in';
 const TARGET_PORT = 8084;
 const TARGET_ORIGIN = `https://${TARGET_HOST}:${TARGET_PORT}`;
 
-// SOCKS5 agent that tunnels all outgoing HTTPS to WARP
-const agent = new SocksProxyAgent(SOCKS_PROXY, {
+// High-performance HTTPS agent with custom DNS and TLS settings
+const agent = new https.Agent({
   rejectUnauthorized: false,
+  keepAlive: true,
+  keepAliveMsecs: 30000,
+  maxSockets: 25,
+  maxFreeSockets: 10,
   timeout: 30000,
 });
 
-// Create http-proxy instance
-const proxy = httpProxy.createProxyServer({
-  target: TARGET_ORIGIN,
-  agent: agent,
-  secure: false,
-  changeOrigin: true,
-  autoRewrite: true,
-  cookieDomainRewrite: '',
-  headers: {
-    host: `${TARGET_HOST}:${TARGET_PORT}`,
-    origin: TARGET_ORIGIN,
-  },
-});
-
-proxy.on('error', (err, req, res) => {
-  console.error(`[Proxy Error] ${req.method} ${req.url}:`, err.message);
-  if (res && !res.headersSent) {
-    res.writeHead(502, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      error: 'Proxy Gateway Error',
-      message: err.message,
-      target: `${TARGET_ORIGIN}${req.url}`,
-    }));
-  }
-});
-
 const server = http.createServer((req, res) => {
-  // Always support CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE, HEAD');
   res.setHeader('Access-Control-Allow-Headers', '*');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie, Location');
 
-  // Handle preflight
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
     res.end();
     return;
   }
 
-  // Health check
   if (req.url === '/health' || req.url === '/ping') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', target: TARGET_ORIGIN, warp: true }));
+    res.end(JSON.stringify({ status: 'ok', target: TARGET_ORIGIN, mode: 'direct-tcp' }));
     return;
   }
 
-  // Rewrite referer if needed
-  if (req.headers['referer']) {
+  const forwardHeaders = { ...req.headers };
+  forwardHeaders['host'] = `${TARGET_HOST}:${TARGET_PORT}`;
+  forwardHeaders['origin'] = TARGET_ORIGIN;
+
+  if (forwardHeaders['referer']) {
     const currentOrigin = `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers['host']}`;
-    req.headers['referer'] = req.headers['referer'].replace(currentOrigin, TARGET_ORIGIN);
+    forwardHeaders['referer'] = forwardHeaders['referer'].replace(currentOrigin, TARGET_ORIGIN);
   }
 
-  delete req.headers['x-forwarded-for'];
-  delete req.headers['x-real-ip'];
+  delete forwardHeaders['x-forwarded-for'];
+  delete forwardHeaders['x-real-ip'];
 
-  // Forward through http-proxy
-  proxy.web(req, res);
+  const proxyOptions = {
+    protocol: 'https:',
+    hostname: TARGET_HOST,
+    port: TARGET_PORT,
+    path: req.url,
+    method: req.method,
+    headers: forwardHeaders,
+    agent: agent,
+    servername: TARGET_HOST,
+    rejectUnauthorized: false,
+    timeout: 30000,
+  };
+
+  const proxyReq = https.request(proxyOptions, (proxyRes) => {
+    const responseHeaders = { ...proxyRes.headers };
+
+    if (responseHeaders['location']) {
+      const loc = responseHeaders['location'];
+      const myOrigin = `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers['host']}`;
+      responseHeaders['location'] = loc.replace(TARGET_ORIGIN, myOrigin);
+    }
+
+    res.writeHead(proxyRes.statusCode, responseHeaders);
+    proxyRes.pipe(res, { end: true });
+  });
+
+  proxyReq.on('error', (err) => {
+    console.error(`[Proxy Error] ${req.method} ${req.url}:`, err.message);
+    if (!res.headersSent) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        error: 'Proxy Gateway Error',
+        message: err.message,
+        target: `${TARGET_ORIGIN}${req.url}`,
+      }));
+    }
+  });
+
+  proxyReq.on('timeout', () => {
+    proxyReq.destroy();
+    if (!res.headersSent) {
+      res.writeHead(504, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Upstream ERP Gateway Timeout' }));
+    }
+  });
+
+  req.pipe(proxyReq, { end: true });
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[SVIT Gateway Proxy] Listening on 0.0.0.0:${PORT}`);
+  console.log(`[SVIT Gateway Proxy] Direct TCP mode listening on 0.0.0.0:${PORT}`);
   console.log(`[SVIT Gateway Proxy] Target: ${TARGET_ORIGIN}`);
-  console.log(`[SVIT Gateway Proxy] WARP SOCKS5: ${SOCKS_PROXY}`);
 });
