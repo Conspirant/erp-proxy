@@ -20,8 +20,7 @@ let agent;
 try {
   agent = new SocksProxyAgent(SOCKS_PROXY, {
     rejectUnauthorized: false,
-    keepAlive: true,
-    keepAliveMsecs: 60000,
+    keepAlive: false,
     timeout: 30000,
   });
   console.log(`[SVIT Gateway Proxy] Routing through WARP SOCKS5: ${SOCKS_PROXY}`);

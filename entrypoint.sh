@@ -30,6 +30,7 @@ PublicKey = ${PUBLIC_KEY}
 Endpoint = ${ENDPOINT}
 AllowedIPs = 0.0.0.0/0
 AllowedIPs = ::/0
+PersistentKeepalive = 25
 
 [Socks5]
 BindAddress = 127.0.0.1:1080
