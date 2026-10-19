@@ -1,13 +1,12 @@
 {
   "name": "svit-erp-proxy",
   "version": "1.0.0",
-  "description": "Reverse proxy gateway for SVIT Accredia ERP portal on port 8084",
+  "description": "Reverse proxy gateway for SVIT Accredia ERP portal with Cloudflare WARP tunneling",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
-  "engines": {
-    "node": ">=18.0.0"
-  },
-  "dependencies": {}
+  "dependencies": {
+    "socks-proxy-agent": "^8.0.4"
+  }
 }

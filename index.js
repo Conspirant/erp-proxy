@@ -1,59 +1,63 @@
 /**
  * SVIT Accredia ERP Reverse Proxy Gateway
- * Deployable on Render / Railway / Fly.io / VPS
+ * Runs in Docker with Cloudflare WARP tunneling via local SOCKS5 proxy
  *
  * Target: https://svit-students.accredia.in:8084
- * 
- * Features:
- * - Transparently forwards all HTTP/HTTPS requests to port 8084
- * - Full cookie / Set-Cookie header preservation
- * - Handles both GET and POST requests with bodies
- * - Automatic connection pooling and keep-alive
- * - CORS headers enabled for all origins
  */
 
 const http = require('http');
 const https = require('https');
-const url = require('url');
+const { SocksProxyAgent } = require('socks-proxy-agent');
 
 const PORT = process.env.PORT || 8080;
+const SOCKS_PROXY = process.env.SOCKS_PROXY || 'socks5h://127.0.0.1:1080';
 const TARGET_HOST = 'svit-students.accredia.in';
 const TARGET_PORT = 8084;
 const TARGET_ORIGIN = `https://${TARGET_HOST}:${TARGET_PORT}`;
 
-// Custom HTTPS Agent to ignore self-signed certificates and maintain connection pool
-const agent = new https.Agent({
-  rejectUnauthorized: false,
-  keepAlive: true,
-  keepAliveMsecs: 60000,
-  maxSockets: 50,
-  maxFreeSockets: 10,
-  timeout: 30000,
-});
+// Create agent: use SOCKS5 agent if SOCKS_PROXY is configured, otherwise fallback to direct HTTPS agent
+let agent;
+try {
+  agent = new SocksProxyAgent(SOCKS_PROXY, {
+    rejectUnauthorized: false,
+    keepAlive: true,
+    keepAliveMsecs: 60000,
+    timeout: 30000,
+  });
+  console.log(`[SVIT Gateway Proxy] Routing through WARP SOCKS5: ${SOCKS_PROXY}`);
+} catch (e) {
+  console.warn(`[SVIT Gateway Proxy] Falling back to direct agent:`, e.message);
+  agent = new https.Agent({
+    rejectUnauthorized: false,
+    keepAlive: true,
+    timeout: 30000,
+  });
+}
 
 const server = http.createServer((req, res) => {
-  // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
   res.setHeader('Access-Control-Allow-Headers', '*');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Expose-Headers', 'Set-Cookie, Location');
 
-  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
     res.end();
     return;
   }
 
-  // Health check endpoint
   if (req.url === '/health' || req.url === '/ping') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', target: TARGET_ORIGIN, timestamp: new Date().toISOString() }));
+    res.end(JSON.stringify({
+      status: 'ok',
+      target: TARGET_ORIGIN,
+      warp: !!SOCKS_PROXY,
+      timestamp: new Date().toISOString()
+    }));
     return;
   }
 
-  // Build clean request headers to forward
   const forwardHeaders = { ...req.headers };
   forwardHeaders['host'] = `${TARGET_HOST}:${TARGET_PORT}`;
   forwardHeaders['origin'] = TARGET_ORIGIN;
@@ -77,10 +81,8 @@ const server = http.createServer((req, res) => {
   };
 
   const proxyReq = https.request(proxyOptions, (proxyRes) => {
-    // Rewrite Set-Cookie to ensure cookies work across domains
     const responseHeaders = { ...proxyRes.headers };
 
-    // Rewrite Location headers if redirect occurs
     if (responseHeaders['location']) {
       const loc = responseHeaders['location'];
       const myOrigin = `${req.headers['x-forwarded-proto'] || 'http'}://${req.headers['host']}`;
@@ -111,7 +113,6 @@ const server = http.createServer((req, res) => {
     }
   });
 
-  // Pipe the incoming request body (for POST requests) into the proxy request
   req.pipe(proxyReq, { end: true });
 });
 
