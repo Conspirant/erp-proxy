@@ -1,34 +1,32 @@
 /**
  * SVIT Accredia ERP Reverse Proxy Gateway
- * Runs in Docker with Cloudflare WARP tunneling via local SOCKS5 proxy
+ * Routes HTTPS traffic to port 8084 via Cloudflare WARP HTTP CONNECT tunnel
  *
  * Target: https://svit-students.accredia.in:8084
  */
 
 const http = require('http');
 const https = require('https');
-const { SocksProxyAgent } = require('socks-proxy-agent');
+const { HttpsProxyAgent } = require('https-proxy-agent');
 
 const PORT = process.env.PORT || 8080;
-const SOCKS_PROXY = process.env.SOCKS_PROXY || 'socks5h://127.0.0.1:1080';
+const WARP_HTTP_PROXY = process.env.HTTP_PROXY || 'http://127.0.0.1:3128';
 const TARGET_HOST = 'svit-students.accredia.in';
 const TARGET_PORT = 8084;
 const TARGET_ORIGIN = `https://${TARGET_HOST}:${TARGET_PORT}`;
 
-// Create agent: use SOCKS5 agent if SOCKS_PROXY is configured, otherwise fallback to direct HTTPS agent
+// Create HttpsProxyAgent pointing to wireproxy's local HTTP CONNECT proxy
 let agent;
 try {
-  agent = new SocksProxyAgent(SOCKS_PROXY, {
+  agent = new HttpsProxyAgent(WARP_HTTP_PROXY, {
     rejectUnauthorized: false,
-    keepAlive: false,
     timeout: 30000,
   });
-  console.log(`[SVIT Gateway Proxy] Routing through WARP SOCKS5: ${SOCKS_PROXY}`);
+  console.log(`[SVIT Gateway Proxy] Routing through WARP HTTP Tunnel: ${WARP_HTTP_PROXY}`);
 } catch (e) {
-  console.warn(`[SVIT Gateway Proxy] Falling back to direct agent:`, e.message);
+  console.warn(`[SVIT Gateway Proxy] Direct agent fallback:`, e.message);
   agent = new https.Agent({
     rejectUnauthorized: false,
-    keepAlive: true,
     timeout: 30000,
   });
 }
@@ -51,7 +49,7 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({
       status: 'ok',
       target: TARGET_ORIGIN,
-      warp: !!SOCKS_PROXY,
+      warp: true,
       timestamp: new Date().toISOString()
     }));
     return;
@@ -118,7 +116,7 @@ const server = http.createServer((req, res) => {
   req.pipe(proxyReq, { end: true });
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`[SVIT Gateway Proxy] Listening on port ${PORT}`);
   console.log(`[SVIT Gateway Proxy] Target: ${TARGET_ORIGIN}`);
 });

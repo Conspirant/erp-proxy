@@ -7,6 +7,6 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "socks-proxy-agent": "^8.0.4"
+    "https-proxy-agent": "^7.0.5"
   }
 }
